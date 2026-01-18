@@ -1,0 +1,556 @@
+# k8s.yaml — все манифесты в одном файле (multi-document)
+# Namespace: vfx-store
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vfx-store
+  labels:
+    name: vfx-store
+
+# -----------------------------
+# ConfigMaps
+# -----------------------------
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vfx-common-config
+  namespace: vfx-store
+data:
+  # Внутрикластерные адреса сервисов
+  CATALOG_BASE_URL: "http://catalog-service:8080"
+  ORDER_BASE_URL: "http://order-service:8080"
+
+  # Внешние зависимости (вне k8s)
+  POSTGRES_HOST: "postgres.vfx.internal"
+  POSTGRES_PORT: "5432"
+  RABBITMQ_HOST: "rabbitmq.vfx.internal"
+  RABBITMQ_PORT: "5672"
+  S3_ENDPOINT: "https://s3.vfx.internal"
+
+  # Внешние REST провайдеры (пример)
+  PAYMENT_API_BASE_URL: "https://payments.example.com"
+  EMAIL_API_BASE_URL: "https://email.example.com"
+
+  # Общие настройки
+  LOG_LEVEL: "info"
+
+# -----------------------------
+# Secrets (пример: base64 значения нужно заменить своими)
+# -----------------------------
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vfx-secrets
+  namespace: vfx-store
+type: Opaque
+data:
+  # echo -n 'vfx_user' | base64
+  POSTGRES_USER: "dmZ4X3VzZXI="
+  # echo -n 'vfx_password' | base64
+  POSTGRES_PASSWORD: "dmZ4X3Bhc3N3b3Jk"
+  # echo -n 'rabbit_user' | base64
+  RABBITMQ_USER: "cmFiYml0X3VzZXI="
+  # echo -n 'rabbit_password' | base64
+  RABBITMQ_PASSWORD: "cmFiYml0X3Bhc3N3b3Jk"
+  # JWT secret for gateway (пример)
+  # echo -n 'supersecretjwt' | base64
+  JWT_SECRET: "c3VwZXJzZWNyZXRqd3Q="
+
+# -----------------------------
+# Deployments + Services
+# -----------------------------
+
+# 1) Frontend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-frontend
+  namespace: vfx-store
+  labels:
+    app: web-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-frontend
+  template:
+    metadata:
+      labels:
+        app: web-frontend
+    spec:
+      containers:
+        - name: web-frontend
+          image: ghcr.io/example/vfx-frontend:1.0.0
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-frontend
+  namespace: vfx-store
+  labels:
+    app: web-frontend
+spec:
+  selector:
+    app: web-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+
+# 2) API Gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: vfx-store
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: ghcr.io/example/vfx-gateway:1.0.0
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: vfx-common-config
+            - secretRef:
+                name: vfx-secrets
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "600m"
+              memory: "768Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: vfx-store
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+# 3) Catalog Service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+  namespace: vfx-store
+  labels:
+    app: catalog-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog-service
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+    spec:
+      containers:
+        - name: catalog-service
+          image: ghcr.io/example/vfx-catalog:1.0.0
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: vfx-common-config
+            - secretRef:
+                name: vfx-secrets
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "800m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: vfx-store
+  labels:
+    app: catalog-service
+spec:
+  selector:
+    app: catalog-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+# 4) Order Service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: vfx-store
+  labels:
+    app: order-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      containers:
+        - name: order-service
+          image: ghcr.io/example/vfx-order:1.0.0
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: vfx-common-config
+            - secretRef:
+                name: vfx-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "900m"
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: vfx-store
+  labels:
+    app: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+# 5) Notification Worker (без Service — только consumer)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-worker
+  namespace: vfx-store
+  labels:
+    app: notification-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-worker
+  template:
+    metadata:
+      labels:
+        app: notification-worker
+    spec:
+      containers:
+        - name: notification-worker
+          image: ghcr.io/example/vfx-notify:1.0.0
+          envFrom:
+            - configMapRef:
+                name: vfx-common-config
+            - secretRef:
+                name: vfx-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+
+# -----------------------------
+# Ingress
+# -----------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vfx-store-ingress
+  namespace: vfx-store
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: store.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-frontend
+                port:
+                  number: 80
+
+# -----------------------------
+# CronJob (пример)
+# -----------------------------
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup-expired-links
+  namespace: vfx-store
+  labels:
+    app: cleanup-expired-links
+spec:
+  schedule: "0 3 * * *"   # каждый день в 03:00
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: ghcr.io/example/vfx-maintenance:1.0.0
+              envFrom:
+                - configMapRef:
+                    name: vfx-common-config
+                - secretRef:
+                    name: vfx-secrets
+              args: ["cleanup-expired-download-links"]
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "128Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "256Mi"
+
+# ======================================================
+# NetworkPolicies (доп. задание на 5)
+# ======================================================
+
+# 0) Default deny: запрещаем всё входящее и исходящее по умолчанию
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: vfx-store
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+# 1) Разрешаем DNS (kube-dns) для всех pod'ов
+# Обычно kube-dns в namespace kube-system и имеет label k8s-app: kube-dns или k8s-app: coredns.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: vfx-store
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# 2) Вход в frontend и gateway разрешаем только от Ingress Controller
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-controller-to-public
+  namespace: vfx-store
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: ["web-frontend", "api-gateway"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 8080
+
+# 3) Gateway -> catalog/order (внутри кластера)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-to-backend
+  namespace: vfx-store
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: ["catalog-service", "order-service"]
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+
+# 4) Egress: catalog-service -> PostgreSQL и S3
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-catalog-egress
+  namespace: vfx-store
+spec:
+  podSelector:
+    matchLabels:
+      app: catalog-service
+  policyTypes: ["Egress"]
+  egress:
+    # PostgreSQL (пример IP)
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.10/32
+      ports:
+        - protocol: TCP
+          port: 5432
+    # S3 endpoint (пример CIDR: заменить под вашу сеть / egress gateway)
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.20/32
+      ports:
+        - protocol: TCP
+          port: 443
+
+# 5) Egress: order-service -> PostgreSQL, RabbitMQ и Payment API
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-order-egress
+  namespace: vfx-store
+spec:
+  podSelector:
+    matchLabels:
+      app: order-service
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.10/32   # postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.11/32   # rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+    # Payment API (пример, внешняя сеть). Для SaaS IP может меняться — в проде обычно egress gateway / NAT + allowlist.
+    - to:
+        - ipBlock:
+            cidr: 203.0.113.0/24
+      ports:
+        - protocol: TCP
+          port: 443
+
+# 6) Egress: notification-worker -> RabbitMQ, Email API и S3
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-egress
+  namespace: vfx-store
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-worker
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.11/32   # rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+    - to:
+        - ipBlock:
+            cidr: 198.51.100.0/24  # Email API (пример)
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: 10.10.0.20/32    # S3 endpoint (пример)
+      ports:
+        - protocol: TCP
+          port: 443
